@@ -4,7 +4,7 @@ from typing import List, Optional
 from loguru import logger
 
 COIN_PATTERN = re.compile(
-    r"(?:^|[\s:\|])+([1-9]\d*)?\s*\.?\s*([A-Za-z]{2,40}USD[TB]?)"
+    r"(?:^|[\s:\|])+([1-9]\d*)?\s*\.?\s*([A-Za-z]{2,40}(?:-?USD[TB]?)\b)"
 )
 
 # Emoji ranges (common trading app emojis)
@@ -35,7 +35,7 @@ NON_COIN_WORDS = {
 
 def _strip_quote(ticker: str) -> str:
     """Strip known quote suffix. 'BTCUSDT' -> 'BTC'."""
-    upper = ticker.upper()
+    upper = ticker.upper().replace("-", "")
     for q in sorted(QUOTE_SUFFIXES, key=len, reverse=True):
         if upper.endswith(q) and len(upper) > len(q):
             return upper[: -len(q)]
@@ -82,7 +82,10 @@ def _detect_side(line: str, prev_side: Optional[str]) -> Optional[str]:
     return None
 
 
-def parse_ckp_message(text: str) -> List[SignalCandidate]:
+def parse_ckp_message(text):
+    # SQL_ASCII DB encoding makes psycopg return raw_text as bytes; decode here
+    # so every caller (translate, translator tests) is safe at the shared entry point.
+    if isinstance(text, bytes): text = text.decode("utf-8", "replace")
     if not text:
         return []
     candidates: List[SignalCandidate] = []

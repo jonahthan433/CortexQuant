@@ -21,7 +21,7 @@ class PortfolioLedger:
     def __init__(self, dsn: str | None = None): self.dsn = dsn or settings.DATABASE_URL
     @contextmanager
     def connect(self):
-        with psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5) as conn:
+        with psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5, client_encoding='UTF8') as conn:
             yield conn
     def initialize(self):
         with self.connect() as c: c.execute(SCHEMA)
