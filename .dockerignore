@@ -1,0 +1,17 @@
+# Never include credentials, Telegram authorization, runtime data, or logs in images.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+**/*.session
+**/*.session-journal
+
+# Local state and development artifacts.
+data/
+logs/
+.venv/
+venv/
+**/__pycache__/
+.pytest_cache/
+.git/

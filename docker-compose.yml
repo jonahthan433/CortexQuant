@@ -1,0 +1,22 @@
+services:
+  trading-bot:
+    image: trading_system-trading-bot:final-paper-7d
+    build:
+      context: .
+      args:
+        KRONOS_COMMIT: 67b630e67f6a18c9e9be918d9b4337c960db1e9a
+    container_name: ckp_trading_bot
+    restart: unless-stopped
+    network_mode: host
+    env_file: [.env]
+    environment:
+      PYTHONUNBUFFERED: "1"
+      TZ: UTC
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"

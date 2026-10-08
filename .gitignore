@@ -1,0 +1,23 @@
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+
+# Telegram authorization and all runtime state
+*.session
+*.session-journal
+data/
+logs/
+
+# Python build and editor artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.idea/
+.vscode/
+.DS_Store
