@@ -101,6 +101,44 @@ def _scenarios(kronos, market):
     return {"available": True, "status": kronos.status, "symbols": out}
 
 
+
+START_EQUITY = 10000.0  # ponytail: mirrors decision.py paper_equity default; open-position unrealized excluded
+
+
+def summary_text(report, ledger):
+    """End-of-day message: Day, Balance, Realized (day), daily average."""
+    day, period = report["day"], report["period"]
+    raw = ledger.get_state("paper_start_ts")
+    started = datetime.fromisoformat(raw) if isinstance(raw, str) else None
+    days = (datetime.now(timezone.utc) - started).total_seconds() / 86400 if started else 0.0
+    total = period.get("total_pnl", 0.0)
+    avg = total / days if days > 0.05 else 0.0
+    def pct(v):
+        return "n/a" if v is None else "%.1f%%" % (v * 100)
+    return (
+        "Daily Review - %s\n"
+        "Balance: %.2f USDT (realized)\n"
+        "Realized today: %+.2f USDT\n"
+        "Daily average: %+.2f USDT\n"
+        "Trades today: %d | period: %d\n"
+        "Win rate: %s | avg R: %s | PF: %s | max DD: %s\n"
+        "Open: %d | kill switch: %s | paper days left: %.2f"
+        % (
+            report["review_date"],
+            START_EQUITY + total,
+            day.get("total_pnl", 0.0),
+            avg,
+            day.get("trades", 0), period.get("trades", 0),
+            pct(period.get("win_rate")),
+            ("n/a" if period.get("avg_r") is None else "%.2f" % period["avg_r"]),
+            ("n/a" if period.get("profit_factor") is None else "%.2f" % period["profit_factor"]),
+            ("n/a" if period.get("max_drawdown_usd") is None else "%.2f" % period["max_drawdown_usd"]),
+            report["open_positions"],
+            "ON" if report["kill_switch"] else "off",
+            max(0.0, settings.PAPER_DAYS - days),
+        )
+    )
+
 def run_daily_review(ledger, kronos=None, market=None, day=None):
     """Compute yesterday + whole-period metrics, persist the report, tune safely."""
     day = day or (datetime.now(timezone.utc) - timedelta(days=1)).date()
@@ -120,6 +158,7 @@ def run_daily_review(ledger, kronos=None, market=None, day=None):
     adjustment = _maybe_tune(ledger, report["day"])
     if adjustment:
         report["param_adjustment"] = adjustment
+    report["summary"] = summary_text(report, ledger)
     ledger.event("daily_review", report)
     ledger.set_state("last_daily_review", report)
     logger.warning("daily_review {}", report)

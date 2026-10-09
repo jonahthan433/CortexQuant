@@ -39,7 +39,11 @@ async def run():
         if settings.BINGX_DEMO: logger.warning('LIVE_MODE enabled after paper period; BingX DEMO exchange path selected')
         else: logger.critical('LIVE_MODE enabled after paper period; production BingX adapter selected')
     engine=DecisionEngine(ledger,market,kronos,broker,live_exchange)
-    listener=TelegramListener(ledger); listener.set_signal_callback(engine.process)
+    async def process_offloaded(intents):
+        # ccxt fetch + Kronos inference + sync ledger are blocking; keep them
+        # off the event loop so the health server stays responsive.
+        await asyncio.to_thread(lambda: asyncio.run(engine.process(intents)))
+    listener=TelegramListener(ledger); listener.set_signal_callback(process_offloaded)
     health=HealthServer(ledger,listener,kronos,broker=broker,on_kill=engine.flatten_all); await health.start()
     ledger.set_state('runtime_mode',{'mode':'paper' if not live_eligible else ('bingx_demo' if settings.BINGX_DEMO else 'live'),'paper_start_ts':started.isoformat(),'paper_days':settings.PAPER_DAYS})
     equity=float(ledger.get_state('paper_equity',10000)); ledger.initialize_day(equity)
@@ -83,7 +87,9 @@ async def run():
             due=(last.get('review_date')!=str(now.date()) and now>=target)
             if due:
                 try:
-                    await asyncio.to_thread(run_daily_review,ledger,kronos_g,market_g)
+                    _rep=await asyncio.to_thread(run_daily_review,ledger,kronos_g,market_g)
+                    try: await listener.alert(_rep.get('summary','daily review complete'))
+                    except Exception as e: logger.warning('daily_summary_send_failed error={}',type(e).__name__)
                 except Exception as e: logger.exception('daily_review_failed error={}',type(e).__name__)
             await asyncio.sleep(60)
     try:
