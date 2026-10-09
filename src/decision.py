@@ -27,6 +27,8 @@ class DecisionEngine:
         self.ledger.event('live_kill_switch_flatten_complete',{'remaining_positions':len(ex.fetch_positions())})
 
     async def process(self,intents):
+        from src.signals.ranker import rank_cross_sectional
+        intents=rank_cross_sectional(intents,self.market)  # best-first selection
         for intent in intents:
             logger.info('trade_signal_received source_id={} symbol={} side={}',intent.source_id,intent.symbol,intent.side.value)
             age=(datetime.now(timezone.utc)-intent.timestamp.astimezone(timezone.utc)).total_seconds()
