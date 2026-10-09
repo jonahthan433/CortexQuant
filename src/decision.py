@@ -57,7 +57,8 @@ class DecisionEngine:
             decision=self.risk.decide(intent,price,equity,kronos,correlations)
             if decision.approved and settings.KRONOS_REQUIRE_ALIGNMENT and kronos.get('available') and kronos.get('direction') != intent.side.value:
                 decision=decision.model_copy(update={'approved':False,'quantity':0,'reason':'Kronos direction conflicts with signal'})
-            self.ledger.event('trade_decision',decision.model_dump(mode='json'))
+            _d=decision.model_dump(mode='json'); _d['intent'].pop('raw_text',None)
+            self.ledger.event('trade_decision',_d)
             logger.info('trade_decision source_id={} approved={} reason={} entry={} stop={} target={} quantity={} kronos_status={}',intent.source_id,decision.approved,decision.reason,decision.entry,decision.stop,decision.target,decision.quantity,kronos.get('status'))
             if not decision.approved: continue
             if self.live_exchange is None:
