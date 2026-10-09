@@ -39,11 +39,22 @@ async def run():
         if settings.BINGX_DEMO: logger.warning('LIVE_MODE enabled after paper period; BingX DEMO exchange path selected')
         else: logger.critical('LIVE_MODE enabled after paper period; production BingX adapter selected')
     engine=DecisionEngine(ledger,market,kronos,broker,live_exchange)
-    async def process_offloaded(intents):
-        # ccxt fetch + Kronos inference + sync ledger are blocking; keep them
-        # off the event loop so the health server stays responsive.
-        await asyncio.to_thread(lambda: asyncio.run(engine.process(intents)))
-    listener=TelegramListener(ledger); listener.set_signal_callback(process_offloaded)
+    import queue as _queue, threading as _threading
+    signal_q=_queue.Queue(maxsize=1000)   # ponytail: bounded; drop+log past 1000
+    def signal_worker():
+        # Single consumer: one intent processed at a time. ccxt/Kronos/sync-ledger
+        # block here, never on the event loop -> /health stays responsive.
+        # Serialization is what keeps position-limit + duplicate checks atomic.
+        while True:
+            intents=signal_q.get()
+            try: asyncio.run(engine.process(intents))
+            except Exception as e: logger.exception('signal_worker_error error={}',type(e).__name__)
+            finally: signal_q.task_done()
+    _worker=_threading.Thread(target=signal_worker,name='signal-worker',daemon=True); _worker.start()
+    def enqueue_signals(intents):
+        try: signal_q.put_nowait(intents)
+        except _queue.Full: logger.warning('signal_queue_full dropped_intents={}',len(intents))
+    listener=TelegramListener(ledger); listener.set_signal_callback(enqueue_signals)
     health=HealthServer(ledger,listener,kronos,broker=broker,on_kill=engine.flatten_all); await health.start()
     ledger.set_state('runtime_mode',{'mode':'paper' if not live_eligible else ('bingx_demo' if settings.BINGX_DEMO else 'live'),'paper_start_ts':started.isoformat(),'paper_days':settings.PAPER_DAYS})
     equity=float(ledger.get_state('paper_equity',10000)); ledger.initialize_day(equity)

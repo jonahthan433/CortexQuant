@@ -60,7 +60,10 @@ class DecisionEngine:
             _d=decision.model_dump(mode='json'); _d['intent'].pop('raw_text',None)
             self.ledger.event('trade_decision',_d)
             logger.info('trade_decision source_id={} approved={} reason={} entry={} stop={} target={} quantity={} kronos_status={}',intent.source_id,decision.approved,decision.reason,decision.entry,decision.stop,decision.target,decision.quantity,kronos.get('status'))
-            if not decision.approved: continue
+            if not decision.approved:
+                self.ledger.event('decision_rejected',{'source_id':intent.source_id,'reason':decision.reason})
+                logger.warning('trade_decision rejected risk_engine source_id={} reason={}',intent.source_id,decision.reason)
+                continue
             if self.live_exchange is None:
                 result=self.broker.submit_entry(intent,decision.quantity,decision.entry,decision.stop,decision.target)
             else:
