@@ -55,7 +55,7 @@ class PortfolioLedger:
     def set_kill_switch(self, enabled, reason='operator'):
         self.set_state('kill_switch', {'enabled':bool(enabled),'reason':reason,'updated_at':datetime.now(timezone.utc).isoformat()})
     def event(self, event_type, payload):
-        with self.connect() as c: c.execute("INSERT INTO execution_events(event_type,payload) VALUES(%s,%s)",(event_type,json.dumps(payload,default=str)))
+        with self.connect() as c: c.execute("INSERT INTO execution_events(event_type,payload) VALUES(%s,%s)",(event_type,json.dumps(payload,default=str,ensure_ascii=True)))
     def day_pnl(self, day=None):
         with self.connect() as c:
             r=c.execute("SELECT realized_pnl,starting_equity FROM daily_pnl WHERE trade_date=%s",(day or datetime.now(timezone.utc).date(),)).fetchone()
@@ -76,7 +76,7 @@ class PortfolioLedger:
             c.execute("INSERT INTO execution_events(event_type,payload) VALUES('paper_entry_filled',%s)",(json.dumps({'client_order_id':client_id,'symbol':symbol,'side':side,'quantity':qty,'price':price,'stop':stop,'target':target,'fee':fee}),))
             return True
     def record_order(self, client_id,symbol,side,kind,qty,price,status='filled',reduce_only=False,metadata=None):
-        with self.connect() as c: c.execute("INSERT INTO orders(client_order_id,symbol,side,order_type,quantity,price,status,reduce_only,metadata) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(client_order_id) DO NOTHING",(client_id,symbol,side,kind,qty,price,status,reduce_only,json.dumps(metadata or {})))
+        with self.connect() as c: c.execute("INSERT INTO orders(client_order_id,symbol,side,order_type,quantity,price,status,reduce_only,metadata) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(client_order_id) DO NOTHING",(client_id,symbol,side,kind,qty,price,status,reduce_only,json.dumps(metadata or {},ensure_ascii=True)))
     def record_fill(self, client_id,symbol,side,qty,price,fee=0,realized=0):
         with self.connect() as c:
             c.execute("INSERT INTO fills(client_order_id,symbol,side,quantity,price,fee,realized_pnl) VALUES(%s,%s,%s,%s,%s,%s,%s)",(client_id,symbol,side,qty,price,fee,realized))
