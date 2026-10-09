@@ -32,7 +32,9 @@ class TelegramListener:
                 try:
                     intents=translate(text,f'{ch}:{mid}',received)
                     logger.info('telegram_message_translated channel_id={} message_id={} intents={}',ch,mid,len(intents))
-                    if intents and self.callback: await self.callback(intents)
+                    if intents and self.callback:
+                        _r=self.callback(intents)
+                        if asyncio.iscoroutine(_r): await _r
                     self.ledger.mark_processed(ch,mid)
                 except Exception as e:
                     logger.exception('telegram_inbox_processing_failed channel_id={} message_id={} error={}',ch,mid,type(e).__name__); continue

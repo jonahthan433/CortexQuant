@@ -95,9 +95,10 @@ async def run():
             now=datetime.now(timezone.utc)
             last=ledger.get_state('last_daily_review',{}) or {}
             target=now.replace(hour=settings.REVIEW_HOUR_UTC,minute=5,second=0,microsecond=0)
-            due=(last.get('review_date')!=str(now.date()) and now>=target)
+            due=(ledger.get_state('daily_review_ran_on')!=str(now.date()) and now>=target)
             if due:
                 try:
+                    ledger.set_state('daily_review_ran_on',str(now.date()))
                     _rep=await asyncio.to_thread(run_daily_review,ledger,kronos_g,market_g)
                     try: await listener.alert(_rep.get('summary','daily review complete'))
                     except Exception as e: logger.warning('daily_summary_send_failed error={}',type(e).__name__)

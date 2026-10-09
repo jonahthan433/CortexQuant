@@ -43,7 +43,8 @@ class DecisionEngine:
                 frame=self.market.fetch(ccxt_symbol,limit=min(settings.KRONOS_MAX_CONTEXT,512)); price=float(frame.close.iloc[-1])
             except Exception as e:
                 self.ledger.event('decision_rejected',{'source_id':intent.source_id,'reason':'market_data_unavailable','error':type(e).__name__}); logger.error('trade_decision rejected market_data_unavailable'); continue
-            kronos=self.kronos.forecast(frame,12) if self.kronos.status=='loaded' else {'available':False,'status':self.kronos.status,'model_version':self.kronos.version}
+            kronos=(self.kronos.forecast(frame,12) if len(frame)>=settings.KRONOS_MAX_CONTEXT else None) if self.kronos.status=='loaded' else None
+            if kronos is None: kronos={'available':False,'status':self.kronos.status,'model_version':self.kronos.version}
             # Kronos remains optional: invalid/unavailable forecasts are recorded but do not block valid risk rules.
             equity=float(self.ledger.get_state('paper_equity',10000))
             positions=self.ledger.positions()
