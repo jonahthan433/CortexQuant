@@ -11,6 +11,7 @@ from src.market_data import MarketData
 from src.signals.telegram_listener import TelegramListener
 from src.decision import DecisionEngine
 from src.health import HealthServer
+from src.daily_review import run_daily_review
 from src.paper_policy import execution_mode
 from src.utils.logger import setup_logger
 
@@ -28,9 +29,9 @@ async def run():
         logger.warning('Paper trading period finished. Live trading is now possible if LIVE_MODE=true')
     # Public market data only; authenticated order adapter is instantiated only after both live gates pass.
     market_exchange=ccxt.bingx({'enableRateLimit':True,'options':{'defaultType':'swap'}})
-    market=MarketData(market_exchange)
-    kronos=KronosForecaster(); await asyncio.to_thread(kronos.load)
-    broker=PaperBroker(ledger)
+    market=market_g=MarketData(market_exchange)
+    kronos=kronos_g=KronosForecaster(); await asyncio.to_thread(kronos.load)
+    broker=broker_g=PaperBroker(ledger)
     live_exchange=None
     if live_eligible:
         from src.exchange.bingx_client import BingXClient
@@ -72,9 +73,23 @@ async def run():
                         bar=market.fetch(symbol,timeframe='1m',limit=2).iloc[-1]
                         broker.on_market_bar(position['symbol'],float(bar.high),float(bar.low))
                     except Exception as e: logger.warning('paper_reconciliation_unavailable symbol={} error={}',position['symbol'],type(e).__name__)
+    async def daily_review_scheduler():
+        # Runs once per day at REVIEW_HOUR_UTC (default 00:05). Survives restarts:
+        # last_daily_review date in Postgres prevents double-run; wall-clock aligns.
+        while True:
+            now=datetime.now(timezone.utc)
+            last=ledger.get_state('last_daily_review',{}) or {}
+            target=now.replace(hour=settings.REVIEW_HOUR_UTC,minute=5,second=0,microsecond=0)
+            due=(last.get('review_date')!=str(now.date()) and now>=target)
+            if due:
+                try:
+                    await asyncio.to_thread(run_daily_review,ledger,kronos_g,market_g)
+                except Exception as e: logger.exception('daily_review_failed error={}',type(e).__name__)
+            await asyncio.sleep(60)
     try:
-        await asyncio.gather(listener_supervisor(),monitor())
+        await asyncio.gather(listener_supervisor(),monitor(),daily_review_scheduler())
     finally:
+        for t in (): pass
         await health.stop(); await listener.stop()
 
 if __name__=='__main__':

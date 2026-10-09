@@ -35,7 +35,7 @@ class TelegramListener:
                     if intents and self.callback: await self.callback(intents)
                     self.ledger.mark_processed(ch,mid)
                 except Exception as e:
-                    logger.exception('telegram_inbox_processing_failed channel_id={} message_id={} error={}',ch,mid,type(e).__name__); return
+                    logger.exception('telegram_inbox_processing_failed channel_id={} message_id={} error={}',ch,mid,type(e).__name__); continue
     async def _handle_message(self,event):
         msg=event.message; body=msg.message or ''
         if not body: return

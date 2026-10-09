@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     MAX_CORRELATION: float = 0.85
     DEFAULT_LEVERAGE: int = 5
     PAPER_DAYS: int = 7
+    IMPROVE_DAILY: bool = False
+    REVIEW_HOUR_UTC: int = 0
     PAPER_START_TS: datetime | None = None
     DATABASE_URL: str = "postgresql://cortexquant@127.0.0.1:5432/cortexquant"
     KRONOS_MODEL: str = "NeoQuasar/Kronos-small"
