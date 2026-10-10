@@ -70,6 +70,7 @@ class PortfolioLedger:
             if not inserted: return False
             c.execute("INSERT INTO fills(client_order_id,symbol,side,quantity,price,fee) VALUES(%s,%s,%s,%s,%s,%s)",(client_id,symbol,'buy' if side=='long' else 'sell',qty,price,fee))
             c.execute("INSERT INTO daily_pnl(trade_date,starting_equity,realized_pnl) VALUES(%s,0,%s) ON CONFLICT(trade_date) DO UPDATE SET realized_pnl=daily_pnl.realized_pnl+excluded.realized_pnl,updated_at=now()",(datetime.now(timezone.utc).date(),-fee))
+            c.execute("INSERT INTO system_state(key,value) VALUES('paper_equity',%s) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=now()",(json.dumps(10000.0+float(c.execute("SELECT COALESCE(SUM(realized_pnl),0) s FROM daily_pnl").fetchone()['s'])),))
             c.execute("INSERT INTO positions(symbol,side,quantity,entry_price,stop_price,target_price) VALUES(%s,%s,%s,%s,%s,%s)",(symbol,side,qty,price,stop,target))
             for pid,kind,level in ((stop_id,'stop_loss',stop),(target_id,'take_profit',target)):
                 c.execute("INSERT INTO orders(client_order_id,symbol,side,order_type,quantity,price,status,reduce_only,metadata) VALUES(%s,%s,%s,%s,%s,%s,'open',true,'{\"paper\":true}'::jsonb) ON CONFLICT DO NOTHING",(pid,symbol,close_side,kind,qty,level))
@@ -82,6 +83,7 @@ class PortfolioLedger:
             c.execute("INSERT INTO fills(client_order_id,symbol,side,quantity,price,fee,realized_pnl) VALUES(%s,%s,%s,%s,%s,%s,%s)",(client_id,symbol,side,qty,price,fee,realized))
             delta=realized-fee
             c.execute("INSERT INTO daily_pnl(trade_date,starting_equity,realized_pnl) VALUES(%s,0,%s) ON CONFLICT(trade_date) DO UPDATE SET realized_pnl=daily_pnl.realized_pnl+excluded.realized_pnl,updated_at=now()",(datetime.now(timezone.utc).date(),delta))
+            c.execute("INSERT INTO system_state(key,value) VALUES('paper_equity',%s) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=now()",(json.dumps(10000.0+float(c.execute("SELECT COALESCE(SUM(realized_pnl),0) s FROM daily_pnl").fetchone()['s'])),))
     def upsert_position(self,symbol,side,qty,entry,stop=None,target=None):
         with self.connect() as c: c.execute("INSERT INTO positions(symbol,side,quantity,entry_price,stop_price,target_price) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(symbol) DO UPDATE SET side=excluded.side,quantity=excluded.quantity,entry_price=excluded.entry_price,stop_price=excluded.stop_price,target_price=excluded.target_price,updated_at=now()",(symbol,side,qty,entry,stop,target))
     def remove_position(self,symbol):
