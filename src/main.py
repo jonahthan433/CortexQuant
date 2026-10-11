@@ -26,7 +26,7 @@ async def run():
     live_eligible=mode != 'paper'
     logger.warning('execution_mode={} paper_days_elapsed={:.3f} paper_days_remaining={:.3f}', mode.upper(),elapsed,max(0,settings.PAPER_DAYS-elapsed))
     if elapsed>=settings.PAPER_DAYS and not ledger.get_state('paper_period_alert_sent',False):
-        logger.warning('Paper trading period finished. Live trading is now possible if LIVE_MODE=true')
+        logger.warning('Paper trading period finished. Execution now follows EXECUTION_TARGET={}', settings.EXECUTION_TARGET)
     # Public market data only; authenticated order adapter is instantiated only after both live gates pass.
     market_exchange=ccxt.bingx({'enableRateLimit':True,'options':{'defaultType':'swap'}})
     market=market_g=MarketData(market_exchange)
@@ -36,8 +36,8 @@ async def run():
     if live_eligible:
         from src.exchange.bingx_client import BingXClient
         live_exchange=BingXClient()
-        if settings.BINGX_DEMO: logger.warning('LIVE_MODE enabled after paper period; BingX DEMO exchange path selected')
-        else: logger.critical('LIVE_MODE enabled after paper period; production BingX adapter selected')
+        if mode=='bingx_demo': logger.warning('EXECUTION_TARGET=bingx_demo; BingX VST demo exchange path selected')
+        else: logger.critical('EXECUTION_TARGET=live; production BingX adapter selected - REAL MONEY')
     engine=DecisionEngine(ledger,market,kronos,broker,live_exchange)
     import queue as _queue, threading as _threading
     signal_q=_queue.Queue(maxsize=1000)   # ponytail: bounded; drop+log past 1000
@@ -83,11 +83,20 @@ async def run():
             elif live_exchange is None:
                 # Simulate paper stop/target fills from fresh one-minute OHLCV.
                 for position in ledger.positions():
-                    try:
-                        symbol=position['symbol'][:-4]+'/USDT:USDT'
-                        bar=market.fetch(symbol,timeframe='1m',limit=2).iloc[-1]
-                        broker.on_market_bar(position['symbol'],float(bar.high),float(bar.low))
-                    except Exception as e: logger.warning('paper_reconciliation_unavailable symbol={} error={}',position['symbol'],type(e).__name__)
+                    symbol=position['symbol'][:-4]+'/USDT:USDT'
+                    # BingX rate-limits the public OHLCV endpoint; one failure is
+                    # transient, so retry before giving up on this bar.
+                    bar=None
+                    for _attempt in range(3):
+                        try:
+                            bar=market.fetch(symbol,timeframe='1m',limit=2).iloc[-1]
+                            break
+                        except Exception:
+                            time.sleep(1.0)
+                    if bar is None:
+                        logger.warning('paper_reconciliation_unavailable symbol={} error=retries_exhausted',position['symbol'])
+                        continue
+                    broker.on_market_bar(position['symbol'],float(bar.high),float(bar.low))
     async def daily_review_scheduler():
         # Runs once per day at REVIEW_HOUR_UTC (default 00:05). Survives restarts:
         # last_daily_review date in Postgres prevents double-run; wall-clock aligns.

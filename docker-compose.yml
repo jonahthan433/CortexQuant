@@ -1,6 +1,6 @@
 services:
   trading-bot:
-    image: trading_system-trading-bot:final-paper-7d-v2
+    image: trading_system-trading-bot:final-paper-7d-v5
     build:
       context: .
       args:

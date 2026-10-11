@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     DATA_DIR: Path = Path("/app/data")
     LOG_DIR: Path = Path("/app/logs")
     LIVE_MODE: str = "false"
+    # Explicit execution target: paper (internal ledger) | bingx_demo (VST) | live (real money).
+    # Independent of LIVE_MODE so enabling demo orders never implies live orders. Real money
+    # requires EXECUTION_TARGET=live AND LIVE_MODE=true — both deliberate.
+    EXECUTION_TARGET: str = "paper"
     BINGX_DEMO: bool = True
     BINGX_API_KEY: str = ""
     BINGX_API_SECRET: str = ""
@@ -46,6 +50,15 @@ class Settings(BaseSettings):
     def live_exact_string(cls, value):
         # Preserve exact opt-in semantics; e.g. True, 1, yes, and whitespace are not live.
         return "true" if value == "true" else "false"
+
+    @field_validator("EXECUTION_TARGET", mode="before")
+    @classmethod
+    def valid_execution_target(cls, value):
+        # Only these three targets are routable; anything else falls back to paper.
+        v = str(value).strip().lower()
+        if v not in ("paper", "bingx_demo", "live"):
+            raise ValueError("EXECUTION_TARGET must be one of paper|bingx_demo|live")
+        return v
 
     @field_validator("PAPER_DAYS")
     @classmethod

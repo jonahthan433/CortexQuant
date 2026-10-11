@@ -19,7 +19,10 @@ class RiskEngine:
         if price<=0: ok=False; reason='invalid market price'
         if stop is None:
             volatility=float((kronos or {}).get('volatility_estimate') or 0.0)
-            stop_pct=max(0.008,2.0*volatility*(12**0.5))
+            # Clamp the stop distance to a fraction of price: an unclamped
+            # stop_pct > 1 drives the stop negative on very cheap tokens
+            # (UBIKUSDT entry 0.00701 -> stop -0.00059), which is unplaceable.
+            stop_pct=min(0.5,max(0.008,2.0*volatility*(12**0.5)))
             stop=price*(1-stop_pct if intent.side.value=='long' else 1+stop_pct)
         if (intent.side.value=='long' and not stop<price) or (intent.side.value=='short' and not stop>price): ok=False; reason='stop is on wrong side of entry'
         if target is None: target=price+(price-stop)*1.5 if intent.side.value=='long' else price-(stop-price)*1.5

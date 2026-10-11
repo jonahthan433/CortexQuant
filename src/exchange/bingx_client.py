@@ -4,14 +4,19 @@ Supports both live and demo (VST) modes.
 """
 
 import ccxt
+from datetime import timezone
 from loguru import logger
 from config.settings import settings
+from src.paper_policy import resolve_execution_target
 
 
 class BingXClient:
     def __init__(self):
         self._assert_execution_gate()
-        self.demo = settings.BINGX_DEMO
+        # Route strictly by resolved target: only bingx_demo uses the VST sandbox.
+        self.demo = resolve_execution_target() == "bingx_demo"
+        if self.demo and not settings.BINGX_DEMO:
+            raise RuntimeError("BingX order adapter blocked: EXECUTION_TARGET=bingx_demo requires BINGX_DEMO=true")
         self.exchange = self._create_exchange()
         mode = "DEMO (VST)" if self.demo else "LIVE"
         logger.info(f"BingX client initialized in {mode} mode")
@@ -19,16 +24,19 @@ class BingXClient:
     @staticmethod
     def _assert_execution_gate():
         # Keep the guard inside the adapter as well as the runtime router.
-        if settings.LIVE_MODE != "true":
-            raise RuntimeError("BingX order adapter blocked: LIVE_MODE must equal exact string true")
+        from src.paper_policy import resolve_execution_target
+        target = resolve_execution_target()
+        if target == "paper":
+            raise RuntimeError("BingX order adapter blocked: EXECUTION_TARGET=paper (internal ledger only)")
+        if target == "live" and settings.LIVE_MODE != "true":
+            raise RuntimeError("BingX order adapter blocked: real money requires EXECUTION_TARGET=live AND LIVE_MODE=true")
         from src.ledger import PortfolioLedger
-        from src.paper_policy import execution_mode
         stamp=PortfolioLedger().get_state('paper_start_ts')
         if not stamp:
             raise RuntimeError("BingX order adapter blocked: paper start timestamp is missing")
         from datetime import datetime
         started=datetime.fromisoformat(stamp) if isinstance(stamp,str) else datetime.fromisoformat(stamp['ts'])
-        if execution_mode(started,live_flag=settings.LIVE_MODE,paper_days=settings.PAPER_DAYS,bingx_demo=settings.BINGX_DEMO)=='paper':
+        if (datetime.now(timezone.utc)-started.astimezone(timezone.utc)).total_seconds() < settings.PAPER_DAYS*86400:
             raise RuntimeError("BingX order adapter blocked: mandatory paper period has not elapsed")
 
     def _create_exchange(self) -> ccxt.bingx:
