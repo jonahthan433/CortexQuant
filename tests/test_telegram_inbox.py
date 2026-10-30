@@ -28,6 +28,8 @@ class TelegramInboxTests(unittest.TestCase):
     def test_listener_drains_persisted_messages_sequentially(self):
         listener = object.__new__(TelegramListener)
         listener._lock = asyncio.Lock()
+        listener._queue = asyncio.Queue(maxsize=1000)
+        listener._shutdown = asyncio.Event()
         class Ledger:
             def __init__(self): self.items=[{'channel_id':-1001,'message_id':10,'raw_text':'a','received_at':'t1'},{'channel_id':-1001,'message_id':11,'raw_text':'b','received_at':'t2'}]; self.done=[]
             def pending(self): return list(self.items)
@@ -38,7 +40,20 @@ class TelegramInboxTests(unittest.TestCase):
         import src.signals.telegram_listener as listener_module
         original=listener_module.translate
         listener_module.translate=lambda text,source_id,timestamp: [text]
-        try: asyncio.run(listener.drain())
+
+        async def run_test():
+            await listener.drain()
+            # Process queue items directly (simulate worker)
+            while not listener._queue.empty():
+                ch, mid, text, received = await listener._queue.get()
+                intents = listener_module.translate(text, f'{ch}:{mid}', received)
+                if intents and listener.callback:
+                    _r = listener.callback(intents)
+                    if asyncio.iscoroutine(_r): await _r
+                listener.ledger.mark_processed(ch, mid)
+                listener._queue.task_done()
+
+        try: asyncio.run(run_test())
         finally: listener_module.translate=original
         self.assertEqual(seen,['a','b'])
         self.assertEqual(listener.ledger.done,[(-1001,10),(-1001,11)])

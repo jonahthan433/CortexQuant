@@ -1,10 +1,14 @@
 import re
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Set
 from loguru import logger
+from config.settings import settings
+
+# Maximum length for base symbol (before quote suffix) - prevents absurd tickers like 12345678901234567890USDT
+MAX_BASE_SYMBOL_LEN = 10
 
 COIN_PATTERN = re.compile(
-    r"(?:^|[\s:\|])+([1-9]\d*)?\s*\.?\s*([A-Za-z]{2,40}(?:-?USD[TB]?)\b)"
+    r"(?:^|[\s:\|])+([1-9]\d*)?\s*\.?\s*([A-Za-z]{2," + str(MAX_BASE_SYMBOL_LEN) + r"}(?:-?USD[TB]?)\b)"
 )
 
 # Emoji ranges (common trading app emojis)
@@ -31,6 +35,17 @@ NON_COIN_WORDS = {
     "PRICE", "OPPORTUNIT", "CONFIRM", "SETUP", "SUGGEST", "PICK",
     "SCAN", "CKP", "SCOUT", "LIST", "ADMIN", "UPDATE", "BONUS",
 }
+
+# Allow-list of known tradeable base symbols (loaded from settings or exchange)
+# If empty, validation falls back to deny-list only (legacy behavior).
+# Populate via TRADABLE_SYMBOLS_ALLOWLIST env var (comma-separated).
+def _load_allowlist() -> Set[str]:
+    allowlist_str = getattr(settings, 'TRADABLE_SYMBOLS_ALLOWLIST', '')
+    if allowlist_str:
+        return {s.strip().upper() for s in allowlist_str.split(',') if s.strip()}
+    return set()
+
+ALLOWED_SYMBOLS: Set[str] = _load_allowlist()
 
 
 def _strip_quote(ticker: str) -> str:
@@ -68,18 +83,26 @@ def _detect_side(line: str, prev_side: Optional[str]) -> Optional[str]:
         return "short"
 
     # 2. Emoji/prefix markers + LONG/SHORT word (🔴 LONG, 🟢 SHORT, etc.)
-    if EMOJI_RE.search(upper[:10]) and ("LONG" in upper or "SHORT" in upper):
-        if "SHORT" in upper:
+    if EMOJI_RE.search(upper[:10]) and (re.search(r"\bLONG\b", upper) or re.search(r"\bSHORT\b", upper)):
+        if re.search(r"\bSHORT\b", upper):
             return "short"
         return "long"
 
     # 3. Inline markers: "LONG:", "→ LONG", etc.
     if re.search(r"(?:LONG|SHORT)\s*[:→]|[→←]\s*(?:LONG|SHORT)\b", upper):
-        m = re.search(r"(LONG|SHORT)", upper)
+        m = re.search(r"\b(LONG|SHORT)\b", upper)
         if m:
             return "long" if m.group() == "LONG" else "short"
 
     return None
+
+
+def _is_allowed_symbol(symbol: str) -> bool:
+    """Check if symbol is in allow-list (if configured) or passes deny-list."""
+    if ALLOWED_SYMBOLS:
+        return symbol in ALLOWED_SYMBOLS
+    # Fallback: deny-list only (legacy behavior)
+    return symbol not in NON_COIN_WORDS
 
 
 def parse_ckp_message(text):
@@ -105,7 +128,9 @@ def parse_ckp_message(text):
             rank_str = match.group(1) or ""
             raw_ticker = match.group(2).upper()
             ticker = _strip_quote(raw_ticker)
-            if ticker in NON_COIN_WORDS or len(ticker) < 2:
+            if len(ticker) < 2:
+                continue
+            if not _is_allowed_symbol(ticker):
                 continue
             rank = None
             if rank_str:

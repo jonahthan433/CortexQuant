@@ -233,3 +233,13 @@ class BingXClient:
         except Exception as e:
             logger.error(f"Connection test failed: {e}")
             return False
+
+    def get_client_order_id(self, prefix: str, intent) -> str:
+        """Generate deterministic client order ID for idempotency."""
+        from uuid import uuid5, NAMESPACE_URL
+        base = f"{intent.source_id}:{intent.symbol}:{prefix}"
+        return str(uuid5(NAMESPACE_URL, base))
+
+    async def set_leverage_async(self, symbol: str, leverage: int) -> bool:
+        """Async wrapper for set_leverage."""
+        return self.set_leverage(symbol, leverage)

@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     BINGX_CA_BUNDLE: str | None = None  # Path to custom CA bundle for certificate pinning
     BINGX_CLIENT_CERT: str | None = None  # Path to client certificate (if mutual TLS required)
 
+    # Signal parser allow-list (comma-separated base symbols, e.g., "BTC,ETH,SOL,ADA")
+    # If empty, falls back to deny-list only (legacy behavior).
+    TRADABLE_SYMBOLS_ALLOWLIST: str = ""
+
     @field_validator("LIVE_MODE", mode="before")
     @classmethod
     def live_exact_string(cls, value):

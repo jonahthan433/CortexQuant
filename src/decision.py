@@ -14,17 +14,45 @@ class DecisionEngine:
         if self.live_exchange is None:
             self.broker.flatten_all()
             return
-        ex=self.live_exchange
+        ex = self.live_exchange
         for position in ex.fetch_positions():
-            qty=float(position.get('contracts') or 0)
-            if qty<=0: continue
-            symbol=position.get('symbol')
-            side=str(position.get('side') or '').lower()
-            close_side='sell' if side=='long' else 'buy'
-            # Reduce-only order; the persistent kill switch remains enabled if any flatten fails.
-            ex.create_market_order(symbol,close_side,qty,params={'reduceOnly':True})
-            self.ledger.remove_position(symbol.replace('/','').replace(':USDT',''))
-        self.ledger.event('live_kill_switch_flatten_complete',{'remaining_positions':len(ex.fetch_positions())})
+            qty = float(position.get('contracts') or 0)
+            if qty <= 0:
+                continue
+            symbol = position.get('symbol')
+            side = str(position.get('side') or '').lower()
+            close_side = 'sell' if side == 'long' else 'buy'
+            # Reduce-only order
+            ex.create_market_order(symbol, close_side, qty, params={'reduceOnly': True})
+
+        # Verify positions are actually closed - poll with timeout
+        import asyncio
+        max_wait = 30  # seconds
+        poll_interval = 2
+        elapsed = 0
+        while elapsed < max_wait:
+            await asyncio.sleep(poll_interval)
+            remaining = ex.fetch_positions()
+            open_positions = [p for p in remaining if float(p.get('contracts', 0)) != 0]
+            if not open_positions:
+                break
+            elapsed += poll_interval
+
+        # Only remove from ledger after verified flat
+        remaining = ex.fetch_positions()
+        open_positions = [p for p in remaining if float(p.get('contracts', 0)) != 0]
+        if open_positions:
+            logger.error(f"Kill switch: {len(open_positions)} positions still open after flatten attempt")
+            for p in open_positions:
+                sym = p.get('symbol')
+                self.ledger.event('kill_switch_flatten_failed', {'symbol': sym, 'side': p.get('side'), 'contracts': p.get('contracts')})
+        else:
+            for position in ex.fetch_positions():
+                symbol = position.get('symbol')
+                if symbol:
+                    self.ledger.remove_position(symbol.replace('/', '').replace(':USDT', ''))
+
+        self.ledger.event('live_kill_switch_flatten_complete', {'remaining_positions': len(open_positions)})
 
     async def process(self,intents):
         from src.signals.ranker import rank_cross_sectional
@@ -69,18 +97,20 @@ class DecisionEngine:
                 logger.warning('trade_decision rejected risk_engine source_id={} reason={}',intent.source_id,decision.reason)
                 continue
             if self.live_exchange is None:
-                result=self.broker.submit_entry(intent,decision.quantity,decision.entry,decision.stop,decision.target)
+                order_result = await self.broker.submit_entry_async(intent, decision)
+                result = {'status': order_result.status, 'client_order_id': order_result.client_order_id,
+                         'fee': order_result.fee, 'price': order_result.price, 'quantity': order_result.quantity}
             else:
-                ex=self.live_exchange
-                ex.set_leverage(ccxt_symbol,settings.DEFAULT_LEVERAGE)
-                order=ex.create_market_order(ccxt_symbol,'buy' if intent.side.value=='long' else 'sell',decision.quantity)
+                ex = self.live_exchange
+                await ex.set_leverage_async(ccxt_symbol, settings.DEFAULT_LEVERAGE)
+                order = ex.create_market_order(ccxt_symbol, 'buy' if intent.side.value == 'long' else 'sell', decision.quantity)
                 try:
-                    protected=protect_or_flatten(ex,symbol=ccxt_symbol,position_side=intent.side.value,amount=decision.quantity,stop_price=decision.stop,target_price=decision.target)
+                    protected = protect_or_flatten(ex, symbol=ccxt_symbol, position_side=intent.side.value, amount=decision.quantity, stop_price=decision.stop, target_price=decision.target)
                     if not protected: continue
                 except PositionFlattenFailure:
-                    self.ledger.set_kill_switch(True,'protection_flatten_failure'); raise
-                cid=f"live:{intent.source_id}:{intent.symbol}"
-                self.ledger.record_order(cid,intent.symbol,intent.side.value,'market',decision.quantity,decision.entry,'submitted',False,{'exchange_order_id':order.get('id')})
-                result={'status':'submitted','client_order_id':cid}
+                    self.ledger.set_kill_switch(True, 'protection_flatten_failure'); raise
+                cid = ex.get_client_order_id("live", intent)
+                self.ledger.record_order(cid, intent.symbol, intent.side.value, 'market', decision.quantity, decision.entry, 'submitted', False, {'exchange_order_id': order.get('id')})
+                result = {'status': 'submitted', 'client_order_id': cid}
             self.ledger.event('order_result',{'source_id':intent.source_id,'result':result,'mode':'paper' if self.live_exchange is None else 'live_or_demo'})
             logger.info('order_result source_id={} status={} order_id={}',intent.source_id,result.get('status'),result.get('client_order_id'))
