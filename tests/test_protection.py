@@ -12,6 +12,9 @@ class BingXProtectiveSideTests(unittest.TestCase):
         self.client = object.__new__(BingXClient)
         self.client.exchange = MagicMock()
         self.client._assert_execution_gate = MagicMock()
+        self.client._gate_lock = MagicMock()
+        self.client._gate_lock.__enter__ = MagicMock(return_value=None)
+        self.client._gate_lock.__exit__ = MagicMock(return_value=None)
         self.client.exchange.create_order.return_value = {"id": "protect-1"}
 
     def test_long_uses_sell_for_stop_and_take_profit(self):

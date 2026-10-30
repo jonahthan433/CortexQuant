@@ -17,6 +17,32 @@ from src.utils.logger import setup_logger
 
 setup_logger()
 
+async def midnight_rollover(ledger, market, live_exchange):
+    """At midnight UTC, initialize the new day's starting equity with mark-to-market."""
+    while True:
+        now = datetime.now(timezone.utc)
+        # Calculate seconds until next midnight UTC
+        next_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        if next_midnight <= now:
+            next_midnight = next_midnight.replace(day=next_midnight.day + 1)
+        sleep_seconds = (next_midnight - now).total_seconds()
+        await asyncio.sleep(sleep_seconds)
+
+        # At midnight, calculate mark-to-market equity and initialize the new day
+        if live_exchange is None:
+            # Paper trading: fetch mark prices for all open positions
+            mark_prices = {}
+            for position in ledger.positions():
+                symbol = position['symbol'][:-4] + '/USDT:USDT'
+                try:
+                    bar = market.fetch(symbol, timeframe='1m', limit=2).iloc[-1]
+                    mark_prices[position['symbol']] = float(bar.close)
+                except Exception:
+                    pass
+            mtm_equity = ledger.get_mark_to_market_equity(mark_prices)
+            ledger.initialize_day(mtm_equity)
+            logger.info(f"Midnight rollover: new day initialized with equity={mtm_equity:.2f}")
+
 async def run():
     ledger=PortfolioLedger(); ledger.initialize()
     started=ledger.paper_start(None)
@@ -73,6 +99,22 @@ async def run():
         while True:
             await asyncio.sleep(15)
             if not ledger.health(): raise RuntimeError('Postgres ledger unavailable')
+
+            # Calculate mark-to-market equity for paper trading
+            if live_exchange is None:
+                # Fetch current prices for all open positions
+                mark_prices = {}
+                for position in ledger.positions():
+                    symbol = position['symbol'][:-4] + '/USDT:USDT'
+                    try:
+                        bar = market.fetch(symbol, timeframe='1m', limit=2).iloc[-1]
+                        mark_prices[position['symbol']] = float(bar.close)
+                    except Exception:
+                        pass  # Skip if price unavailable
+                # Update paper_equity with mark-to-market
+                mtm_equity = ledger.get_mark_to_market_equity(mark_prices)
+                ledger.set_state('paper_equity', mtm_equity)
+
             elapsed=(datetime.now(timezone.utc)-started.astimezone(timezone.utc)).total_seconds()/86400
             if elapsed>=settings.PAPER_DAYS and not ledger.get_state('paper_period_alert_sent',False) and listener.client.is_connected():
                 msg='Paper trading period finished. Live trading is now possible if LIVE_MODE=true'
@@ -114,7 +156,7 @@ async def run():
                 except Exception as e: logger.exception('daily_review_failed error={}',type(e).__name__)
             await asyncio.sleep(60)
     try:
-        await asyncio.gather(listener_supervisor(),monitor(),daily_review_scheduler())
+        await asyncio.gather(listener_supervisor(),monitor(),daily_review_scheduler(),midnight_rollover(ledger, market, live_exchange))
     finally:
         for t in (): pass
         await health.stop(); await listener.stop()

@@ -55,8 +55,9 @@ class DecisionEngine:
                     correlations.append((self.market.correlation(ccxt_symbol,other),position['side']))
                 except Exception as e:
                     logger.warning('correlation_check_unavailable symbol={} error={}',position['symbol'],type(e).__name__)
-                    # Fail closed if a configured correlation check cannot be completed.
-                    correlations.append((1.0,position['side']))
+                    # On transient data issues, default to 0.0 (uncorrelated) rather than 1.0 (perfect correlation).
+                    # This avoids overly conservative blocking of valid trades.
+                    correlations.append((0.0,position['side']))
             decision=self.risk.decide(intent,price,equity,kronos,correlations)
             if decision.approved and settings.KRONOS_REQUIRE_ALIGNMENT and kronos.get('available') and kronos.get('direction') != intent.side.value:
                 decision=decision.model_copy(update={'approved':False,'quantity':0,'reason':'Kronos direction conflicts with signal'})

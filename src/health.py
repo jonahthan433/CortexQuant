@@ -1,9 +1,29 @@
 from aiohttp import web
 from datetime import datetime, timezone
 from config.settings import settings
+import hashlib
+import hmac
 
 class HealthServer:
-    def __init__(self,ledger,listener,kronos,broker=None,on_kill=None): self.ledger,self.listener,self.kronos=ledger,listener,kronos; self.broker=broker; self.on_kill=on_kill; self.runner=None
+    def __init__(self,ledger,listener,kronos,broker=None,on_kill=None):
+        self.ledger,self.listener,self.kronos=ledger,listener,kronos
+        self.broker=broker
+        self.on_kill=on_kill
+        self.runner=None
+        # Kill switch auth token - derived from settings for zero-config but overrideable
+        self._kill_token = getattr(settings, 'HEALTH_KILL_TOKEN', None)
+
+    def _verify_kill_auth(self, request) -> bool:
+        """Verify bearer token for kill switch endpoints."""
+        if self._kill_token is None:
+            # No token configured - deny all kill switch access for safety
+            return False
+        auth = request.headers.get('Authorization', '')
+        if not auth.startswith('Bearer '):
+            return False
+        provided = auth[7:]  # Strip 'Bearer '
+        # Use constant-time comparison
+        return hmac.compare_digest(provided, self._kill_token)
     async def health(self,request):
         try: db_ok=self.ledger.health()
         except Exception: db_ok=False
@@ -30,12 +50,16 @@ class HealthServer:
         except Exception: pass
         return web.Response(text=text,content_type='text/plain')
     async def kill(self,request):
+        if not self._verify_kill_auth(request):
+            return web.json_response({'error': 'Unauthorized'}, status=401)
         self.ledger.set_kill_switch(True,'local_health_api')
         if self.on_kill: await self.on_kill()
         elif self.broker: self.broker.flatten_all()
         positions=self.ledger.positions()
         return web.json_response({'enabled':True,'open_positions':len(positions),'flattened':not positions})
     async def clear_kill(self,request):
+        if not self._verify_kill_auth(request):
+            return web.json_response({'error': 'Unauthorized'}, status=401)
         self.ledger.set_kill_switch(False,'local_operator_reset'); return web.json_response({'enabled':False})
     async def start(self):
         app=web.Application(); app.router.add_get('/health',self.health); app.router.add_get('/metrics',self.metrics); app.router.add_post('/kill-switch',self.kill); app.router.add_post('/kill-switch/disable',self.clear_kill)

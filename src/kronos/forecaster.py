@@ -27,7 +27,8 @@ class KronosForecaster:
         y_timestamp=__import__('pandas').Series(__import__('pandas').date_range(start=x_timestamp.iloc[-1],periods=horizon+1,freq='15min',tz='UTC')[1:])
         pred=self.predictor.predict(df,x_timestamp=x_timestamp.tail(len(df)),y_timestamp=y_timestamp,pred_len=horizon, T=1.0, top_p=0.9, sample_count=1)
         closes=np.asarray(pred['close'],dtype=float)
-        return {'available':True,'model_version':self.version,'status':self.status,'forecast_close':closes.tolist(),'direction':'up' if closes[-1]>float(df.close.iloc[-1]) else 'down','volatility_estimate':float(np.std(np.diff(np.log(closes+1e-12)))) if len(closes)>1 else 0.0}
+        direction = 'long' if closes[-1] > float(df.close.iloc[-1]) else 'short'
+        return {'available':True,'model_version':self.version,'status':self.status,'forecast_close':closes.tolist(),'direction':direction,'volatility_estimate':float(np.std(np.diff(np.log(closes+1e-12)))) if len(closes)>1 else 0.0}
     def volatility(self, ohlcv_df, horizon=24): return self.forecast(ohlcv_df,horizon).get('volatility_estimate')
     def synthetic_scenarios(self, ohlcv_df, count=10, horizon=24):
         if self.status!='loaded': return {'available':False,'model_version':self.version,'status':self.status,'scenarios':[]}

@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     HEALTH_PORT: int = 8080
     LOG_LEVEL: str = "INFO"
     TIMEZONE: str = "UTC"
+    # Bearer token for /kill-switch and /kill-switch/disable endpoints.
+    # If not set, kill switch endpoints are disabled (return 401).
+    HEALTH_KILL_TOKEN: str | None = None
+
+    # TLS verification for BingX exchange connections
+    BINGX_VERIFY_SSL: bool = True
+    BINGX_CA_BUNDLE: str | None = None  # Path to custom CA bundle for certificate pinning
+    BINGX_CLIENT_CERT: str | None = None  # Path to client certificate (if mutual TLS required)
 
     @field_validator("LIVE_MODE", mode="before")
     @classmethod

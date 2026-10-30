@@ -40,16 +40,40 @@ class PaperBroker:
         self.ledger.close_protection_orders(symbol)
         self.ledger.event('paper_position_closed',{'symbol':symbol,'reason':reason,'pnl':pnl,'fee':fee})
         return True
-    def on_market_bar(self,symbol,high,low):
-        pos=next((p for p in self.ledger.positions() if p['symbol']==symbol),None)
-        if not pos: return False
-        stop=float(pos['stop_price']); target=float(pos['target_price'])
-        if pos['side']=='long':
-            if low<=stop: return self.close_position(symbol,stop,'stop_loss')
-            if high>=target: return self.close_position(symbol,target,'take_profit')
+    def on_market_bar(self, symbol, high, low):
+        pos = next((p for p in self.ledger.positions() if p['symbol'] == symbol), None)
+        if not pos:
+            return False
+        stop = float(pos['stop_price'])
+        target = float(pos['target_price'])
+        side = pos['side']
+
+        # Determine which level was hit first in this bar.
+        # For longs: stop hit if low <= stop, target hit if high >= target
+        # For shorts: stop hit if high >= stop, target hit if low <= target
+        # If both hit in same bar, the one closer to the open (or prior close)
+        # should win. Since we only have high/low, we use distance from entry
+        # as a proxy for priority: the level closer to entry is more likely hit first.
+        if side == 'long':
+            stop_hit = low <= stop
+            target_hit = high >= target
         else:
-            if high>=stop: return self.close_position(symbol,stop,'stop_loss')
-            if low<=target: return self.close_position(symbol,target,'take_profit')
+            stop_hit = high >= stop
+            target_hit = low <= target
+
+        if stop_hit and target_hit:
+            # Both hit in same bar - determine which was closer to entry
+            entry = float(pos['entry_price'])
+            stop_dist = abs(entry - stop)
+            target_dist = abs(target - entry)
+            if stop_dist <= target_dist:
+                return self.close_position(symbol, stop, 'stop_loss')
+            else:
+                return self.close_position(symbol, target, 'take_profit')
+        elif stop_hit:
+            return self.close_position(symbol, stop, 'stop_loss')
+        elif target_hit:
+            return self.close_position(symbol, target, 'take_profit')
         return False
     def flatten_all(self, mark_prices=None):
         mark_prices=mark_prices or {}

@@ -90,3 +90,22 @@ class PortfolioLedger:
         with self.connect() as c: c.execute("DELETE FROM positions WHERE symbol=%s",(symbol,))
     def close_protection_orders(self,symbol):
         with self.connect() as c: c.execute("UPDATE orders SET status='cancelled' WHERE symbol=%s AND reduce_only=true AND status='open'",(symbol,))
+    def get_mark_to_market_equity(self, mark_prices: dict) -> float:
+        """Calculate equity including unrealized P&L from open positions."""
+        with self.connect() as c:
+            # Get base equity (10000 + realized P&L)
+            r = c.execute("SELECT COALESCE(SUM(realized_pnl),0) s FROM daily_pnl").fetchone()
+            base_equity = 10000.0 + float(r['s'])
+            # Add unrealized P&L for open positions
+            positions = c.execute("SELECT symbol, side, quantity, entry_price FROM positions").fetchall()
+            for pos in positions:
+                symbol = pos['symbol']
+                if symbol not in mark_prices:
+                    continue
+                mark = float(mark_prices[symbol])
+                qty = float(pos['quantity'])
+                entry = float(pos['entry_price'])
+                side = pos['side']
+                unrealized = (mark - entry) * qty * (1 if side == 'long' else -1)
+                base_equity += unrealized
+            return base_equity

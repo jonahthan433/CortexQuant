@@ -4,6 +4,7 @@ Supports both live and demo (VST) modes.
 """
 
 import ccxt
+import threading
 from datetime import timezone
 from loguru import logger
 from config.settings import settings
@@ -20,6 +21,8 @@ class BingXClient:
         self.exchange = self._create_exchange()
         mode = "DEMO (VST)" if self.demo else "LIVE"
         logger.info(f"BingX client initialized in {mode} mode")
+        # Lock to prevent TOCTOU between gate check and order placement
+        self._gate_lock = threading.Lock()
 
     @staticmethod
     def _assert_execution_gate():
@@ -31,12 +34,12 @@ class BingXClient:
         if target == "live" and settings.LIVE_MODE != "true":
             raise RuntimeError("BingX order adapter blocked: real money requires EXECUTION_TARGET=live AND LIVE_MODE=true")
         from src.ledger import PortfolioLedger
-        stamp=PortfolioLedger().get_state('paper_start_ts')
+        stamp = PortfolioLedger().get_state('paper_start_ts')
         if not stamp:
             raise RuntimeError("BingX order adapter blocked: paper start timestamp is missing")
         from datetime import datetime
-        started=datetime.fromisoformat(stamp) if isinstance(stamp,str) else datetime.fromisoformat(stamp['ts'])
-        if (datetime.now(timezone.utc)-started.astimezone(timezone.utc)).total_seconds() < settings.PAPER_DAYS*86400:
+        started = datetime.fromisoformat(stamp) if isinstance(stamp, str) else datetime.fromisoformat(stamp['ts'])
+        if (datetime.now(timezone.utc) - started.astimezone(timezone.utc)).total_seconds() < settings.PAPER_DAYS * 86400:
             raise RuntimeError("BingX order adapter blocked: mandatory paper period has not elapsed")
 
     def _create_exchange(self) -> ccxt.bingx:
@@ -47,7 +50,15 @@ class BingXClient:
             "options": {
                 "defaultType": "swap",  # perpetual futures
             },
+            # TLS verification settings
+            "verify": getattr(settings, 'BINGX_VERIFY_SSL', True),
+            "cert": getattr(settings, 'BINGX_CLIENT_CERT', None),
         })
+
+        # Custom CA bundle for certificate pinning
+        ca_bundle = getattr(settings, 'BINGX_CA_BUNDLE', None)
+        if ca_bundle:
+            exchange.verify = ca_bundle
 
         if self.demo:
             exchange.set_sandbox_mode(True)
@@ -115,8 +126,16 @@ class BingXClient:
     # Order placement
     # ------------------------------------------------------------------
 
+    def _with_gate(self, func, *args, **kwargs):
+        """Execute function with gate check immediately before the call."""
+        with self._gate_lock:
+            self._assert_execution_gate()
+            return func(*args, **kwargs)
+
     def create_market_order(self, symbol: str, side: str, amount: float, params: dict = None):
-        self._assert_execution_gate()
+        return self._with_gate(self._create_market_order_impl, symbol, side, amount, params)
+
+    def _create_market_order_impl(self, symbol: str, side: str, amount: float, params: dict = None):
         try:
             order = self.exchange.create_order(
                 symbol=symbol,
@@ -132,7 +151,9 @@ class BingXClient:
             raise
 
     def place_stop_loss(self, symbol: str, side: str, sl_price: float, amount: float) -> dict:
-        self._assert_execution_gate()
+        return self._with_gate(self._place_stop_loss_impl, symbol, side, sl_price, amount)
+
+    def _place_stop_loss_impl(self, symbol: str, side: str, sl_price: float, amount: float) -> dict:
         """
         Place a stop-loss order.
         side: 'buy' for short SL (cover), 'sell' for long SL.
@@ -156,7 +177,9 @@ class BingXClient:
             raise
 
     def place_take_profit(self, symbol: str, side: str, tp_price: float, amount: float) -> dict:
-        self._assert_execution_gate()
+        return self._with_gate(self._place_take_profit_impl, symbol, side, tp_price, amount)
+
+    def _place_take_profit_impl(self, symbol: str, side: str, tp_price: float, amount: float) -> dict:
         """
         Place a take-profit order.
         side: 'buy' for short TP (cover), 'sell' for long TP.
@@ -181,15 +204,16 @@ class BingXClient:
 
     def cancel_order(self, order_id: str, symbol: str):
         """Cancel one known protective order."""
-        self._assert_execution_gate()
-        return self.exchange.cancel_order(order_id, symbol)
+        return self._with_gate(self.exchange.cancel_order, order_id, symbol)
 
     # ------------------------------------------------------------------
     # Leverage
     # ------------------------------------------------------------------
 
     def set_leverage(self, symbol: str, leverage: int):
-        self._assert_execution_gate()
+        return self._with_gate(self._set_leverage_impl, symbol, leverage)
+
+    def _set_leverage_impl(self, symbol: str, leverage: int):
         try:
             self.exchange.set_leverage(leverage, symbol)
             logger.info(f"Leverage set to {leverage}x for {symbol}")
